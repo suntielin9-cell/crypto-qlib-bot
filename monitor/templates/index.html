@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Bot Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 16px; color: #58a6ff; display: flex; align-items: center; gap: 10px; }
+  h1 small { font-size: 0.7rem; color: #8b949e; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+  .card .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 1.5rem; font-weight: 600; margin-top: 4px; }
+  .card .sub { font-size: 0.8rem; color: #8b949e; margin-top: 2px; }
+  .green { color: #3fb950; }
+  .red { color: #f85149; }
+  .yellow { color: #d29922; }
+  .blue { color: #58a6ff; }
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  .section h2 { font-size: 1rem; color: #58a6ff; margin-bottom: 10px; }
+  .factor-bar { display: flex; align-items: center; margin: 4px 0; gap: 8px; }
+  .factor-bar .name { width: 110px; font-size: 0.8rem; text-align: right; flex-shrink: 0; }
+  .factor-bar .track { flex: 1; height: 16px; background: #21262d; border-radius: 8px; overflow: hidden; position: relative; }
+  .factor-bar .fill { height: 100%; border-radius: 8px; transition: width 0.5s; }
+  .factor-bar .score { width: 36px; font-size: 0.75rem; text-align: right; flex-shrink: 0; }
+  .table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .table td, .table th { padding: 6px 10px; border-bottom: 1px solid #21262d; text-align: left; }
+  .table th { color: #8b949e; font-weight: 500; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .badge-green { background: #1b4123; color: #3fb950; }
+  .badge-red { background: #4c1a1a; color: #f85149; }
+  .badge-gray { background: #21262d; color: #8b949e; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .status-dot.alive { background: #3fb950; }
+  .status-dot.dead { background: #f85149; }
+  .empty { color: #8b949e; font-style: italic; font-size: 0.85rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Bot Monitor <small id="ts"></small></h1>
+
+  <div class="cards" id="cards">
+    <div class="card"><div class="label">Status</div><div class="value" id="status">--</div></div>
+    <div class="card"><div class="label">Balance</div><div class="value blue" id="balance">--</div><div class="sub">USDT</div></div>
+    <div class="card"><div class="label">Daily PnL</div><div class="value" id="pnl">--</div><div class="sub" id="pnl-pos">--</div></div>
+    <div class="card"><div class="label">Trades Today</div><div class="value" id="trades">--</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="section">
+      <h2>Position</h2>
+      <div id="position"><span class="empty">No open position</span></div>
+    </div>
+    <div class="section">
+      <h2>Qlib Validator</h2>
+      <div id="qlib-stats"><span class="empty">No data</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Latest Qlib Factor Scores</h2>
+    <div id="factors"><span class="empty">No validation data yet</span></div>
+  </div>
+
+  <div class="section">
+    <h2>Latest Validation Detail</h2>
+    <table class="table" id="detail-table">
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td colspan="2"><span class="empty">No data</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<script>
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    render(d);
+  } catch {
+    // initial load, no data yet
+  }
+}
+
+function pctClass(v) {
+  if (v > 0) return 'green';
+  if (v < 0) return 'red';
+  return '';
+}
+
+function render(d) {
+  if (!d) return;
+  document.getElementById('ts').textContent = d.timestamp ? new Date(d.timestamp + 'Z').toLocaleTimeString() : '';
+
+  // Cards
+  const bot = d.bot || {};
+  document.getElementById('status').innerHTML = `<span class="status-dot ${bot.pid ? 'alive' : 'dead'}"></span>${bot.pid ? 'Running (PID ' + bot.pid + ')' : 'Offline'}`;
+  document.getElementById('balance').textContent = bot.balance != null ? bot.balance.toFixed(2) : '--';
+  const pnlEl = document.getElementById('pnl');
+  pnlEl.textContent = bot.daily_pnl != null ? bot.daily_pnl.toFixed(2) : '--';
+  pnlEl.className = 'value ' + pctClass(bot.daily_pnl);
+  document.getElementById('pnl-pos').textContent = bot.paused ? 'PAUSED' : (bot.trades_today + ' trades');
+  document.getElementById('trades').textContent = bot.trades_today != null ? bot.trades_today : '--';
+
+  // Position
+  const pos = d.position;
+  const posEl = document.getElementById('position');
+  if (pos) {
+    const pnlEst = d.qlib && d.qlib.latest ? (d.qlib.latest.confidence / 100) : 0;
+    posEl.innerHTML = `
+      <table class="table">
+        <tr><td>Symbol</td><td><b>${pos.symbol}</b></td></tr>
+        <tr><td>Direction</td><td><span class="badge ${pos.direction === 'sell' ? 'badge-red' : 'badge-green'}">${pos.direction.toUpperCase()}</span></td></tr>
+        <tr><td>Qty</td><td>${pos.qty}</td></tr>
+        <tr><td>Entry</td><td>$${pos.entry_price.toFixed(2)}</td></tr>
+        <tr><td>Stop Loss</td><td>$${pos.stop_loss.toFixed(2)}</td></tr>
+      </table>`;
+  } else {
+    posEl.innerHTML = '<span class="empty">No open position</span>';
+  }
+
+  // Qlib stats
+  const qlib = d.qlib || {};
+  const val = d.validator || {};
+  document.getElementById('qlib-stats').innerHTML = `
+    <table class="table">
+      <tr><td>Validations</td><td>${qlib.total_validations || 0}</td></tr>
+      <tr><td>Confirmed</td><td class="green">${qlib.confirmed || 0}</td></tr>
+      <tr><td>Blocked</td><td class="red">${qlib.blocked || 0}</td></tr>
+      <tr><td>Errors</td><td class="yellow">${val.errors || 0}</td></tr>
+    </table>`;
+
+  // Factor scores
+  const latest = qlib.latest;
+  const factorsEl = document.getElementById('factors');
+  if (latest && latest.details) {
+    const details = latest.details;
+    const names = Object.keys(details);
+    let bars = '';
+    for (const name of names) {
+      const raw = details[name];
+      const pct = Math.round((raw + 1) * 50);
+      const cls = raw >= 0 ? 'green' : 'red';
+      bars += `<div class="factor-bar">
+        <span class="name">${name}</span>
+        <div class="track"><div class="fill" style="width:${pct}%;background:${raw >= 0 ? '#3fb950' : '#f85149'}"></div></div>
+        <span class="score ${cls}">${raw.toFixed(2)}</span>
+      </div>`;
+    }
+    factorsEl.innerHTML = bars;
+  } else {
+    factorsEl.innerHTML = '<span class="empty">No validation data yet</span>';
+  }
+
+  // Detail table
+  const tbl = document.getElementById('detail-table');
+  if (latest) {
+    const blocked = latest.blocked;
+    const statusHtml = blocked
+      ? '<span class="badge badge-red">BLOCKED</span>'
+      : '<span class="badge badge-green">CONFIRMED</span>';
+    tbl.innerHTML = `
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td>Symbol</td><td>${latest.symbol || '--'}</td></tr>
+      <tr><td>Direction</td><td>${latest.direction ? latest.direction.toUpperCase() : '--'}</td></tr>
+      <tr><td>Confidence</td><td><b>${latest.confidence != null ? latest.confidence.toFixed(1) : '--'}</b> / 100</td></tr>
+      <tr><td>Status</td><td>${statusHtml}</td></tr>
+      <tr><td>Reason</td><td>${latest.reason || '--'}</td></tr>
+      <tr><td>Factors</td><td>${latest.factor_count || 0}</td></tr>
+      <tr><td>Time</td><td>${latest.timestamp ? new Date(latest.timestamp).toLocaleTimeString() : '--'}</td></tr>`;
+  } else {
+    tbl.innerHTML = '<tr><th>Field</th><th>Value</th></tr><tr><td colspan="2"><span class="empty">No data</span></td></tr>';
+  }
+}
+
+fetchStats();
+setInterval(fetchStats, 5000);
+</script>
+</body>
+</html>
